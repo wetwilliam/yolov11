@@ -141,6 +141,7 @@ class BaseTransform:
         self.apply_image(labels)
         self.apply_instances(labels)
         self.apply_semantic(labels)
+        return labels
 
 
 class Compose:
@@ -1520,9 +1521,7 @@ class RandomHDRTone(BaseTransform):
                 if choice == 'reinhard':
                     tonemap = cv2.createTonemapReinhard(
                         gamma=random.uniform(1.8, 2.5),
-                        intensity=random.uniform(-1.5, 1.5), # Positive makes it brighter, negative darker
-                        light_adaptation=random.uniform(0.7, 1.0), # 0 for global, 1 for local
-                        color_adaptation=random.uniform(0.0, 0.3) # 0 for no color correction, 1 for full
+                        intensity=random.uniform(-1.5, 1.5) # Positive makes it brighter, negative darker
                     )
                 elif choice == 'mantiuk':
                     tonemap = cv2.createTonemapMantiuk(
