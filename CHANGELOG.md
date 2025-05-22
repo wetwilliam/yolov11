@@ -1,12 +1,11 @@
 # Changelog
 
-
 ## [2025-05-22]
+
 Modify from official main commit:
- [a2b1c3d4e5f678901234567890abcdef12345678] (Remove `frozenset` from `ValueError` logs (#20746))
+[a2b1c3d4e5f678901234567890abcdef12345678] (Remove `frozenset` from `ValueError` logs (#20746))
 
 ### Added
-
 
 - Added `RandomHDRTone` class to `ultralytics/ultralytics/data/augment.py` for simulating HDR tone mapping.
 - Integrated `RandomHDRTone` into `ultralytics/ultralytics/data/augment.py::v8_transforms` with configurable parameter (`hdr_tone`).
