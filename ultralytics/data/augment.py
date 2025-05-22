@@ -1480,6 +1480,144 @@ class RandomHSV:
         return labels
 
 
+
+
+class RandomHDRTone(BaseTransform):
+    """
+    Applies random simulated HDR toning to images.
+    """
+
+    def __init__(self, p=0.0) -> None:
+        """
+        Initializes the RandomHDRTone augmentation object.
+
+        Args:
+            p (float): Probability of applying the HDR tone mapping.
+        """
+        super().__init__()
+        self.p = p
+
+    def apply_image(self, labels):
+        """
+        Applies random simulated HDR toning to the image.
+
+        Args:
+            labels (dict): A dictionary containing image data. Expected to have an 'img' key.
+
+        Returns:
+            (dict): The modified labels dictionary with the toned image.
+        """
+        img = labels["img"]
+        if random.random() < self.p:
+            image_uint8 = img
+            image_float32 = image_uint8.astype(np.float32) / 255.0
+
+            # Randomly choose a tonemap operator and parameters
+            choice = random.choice(['reinhard', 'mantiuk', 'drago']) # Durand can be slower
+            toned_image_float = image_float32.copy() # Default to original if something goes wrong
+
+            try:
+                if choice == 'reinhard':
+                    tonemap = cv2.createTonemapReinhard(
+                        gamma=random.uniform(1.8, 2.5),
+                        intensity=random.uniform(-1.5, 1.5), # Positive makes it brighter, negative darker
+                        light_adaptation=random.uniform(0.7, 1.0), # 0 for global, 1 for local
+                        color_adaptation=random.uniform(0.0, 0.3) # 0 for no color correction, 1 for full
+                    )
+                elif choice == 'mantiuk':
+                    tonemap = cv2.createTonemapMantiuk(
+                        gamma=random.uniform(1.8, 2.5),
+                        scale=random.uniform(0.6, 0.9), # Contrast factor
+                        saturation=random.uniform(0.8, 1.2)
+                    )
+                elif choice == 'drago':
+                    tonemap = cv2.createTonemapDrago(
+                        gamma=random.uniform(1.8, 2.5),
+                        saturation=random.uniform(0.7, 1.3),
+                        bias=random.uniform(0.7, 0.9) # Values between 0.7 and 0.9 are typical
+                    )
+                
+                toned_image_float = tonemap.process(image_float32)
+            except Exception as e:
+                print(f"Error during tonemapping with {choice}: {e}")
+                # Fallback to original or simple gamma if tonemapping fails
+                gamma_val = random.uniform(0.7, 1.5)
+                toned_image_float = np.power(image_float32, gamma_val)
+
+            labels["img"] = np.clip(toned_image_float * 255, 0, 255).astype(np.uint8)
+
+        return labels
+
+
+class RandomLightSource(BaseTransform):
+    """
+    Adds a random simulated light source to images.
+    """
+
+    def __init__(self, p=0.0, max_brightness=0.8, min_radius_factor=0.1, max_radius_factor=0.4) -> None:
+        """
+        Initializes the RandomLightSource augmentation object.
+
+        Args:
+            p (float): Probability of applying the light source augmentation.
+            max_brightness (float): Maximum brightness of the light source.
+            min_radius_factor (float): Minimum radius of the light source as a factor of the image min dimension.
+            max_radius_factor (float): Maximum radius of the light source as a factor of the image min dimension.
+        """
+        super().__init__()
+        self.p = p
+        self.max_brightness = max_brightness
+        self.min_radius_factor = min_radius_factor
+        self.max_radius_factor = max_radius_factor
+
+    def apply_image(self, labels):
+        """
+        Adds a random simulated light source to the image.
+
+        Args:
+            labels (dict): A dictionary containing image data. Expected to have an 'img' key.
+
+        Returns:
+            (dict): The modified labels dictionary with the light source added.
+        """
+        img = labels["img"]
+        if random.random() < self.p:
+            h, w, _ = img.shape
+            image_float = img.astype(np.float32) / 255.0
+
+            # Light position (random)
+            center_x = random.randint(0, w - 1)
+            center_y = random.randint(0, h - 1)
+
+            # Light radius (random, proportional to image size)
+            radius = random.uniform(min(h,w) * self.min_radius_factor, min(h,w) * self.max_radius_factor)
+
+            # Light intensity (brightness of the light itself)
+            light_intensity = random.uniform(0.5, self.max_brightness)
+
+            # Create coordinate grid
+            Y, X = np.ogrid[:h, :w]
+
+            # Calculate distance from center
+            dist_from_center = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
+
+            # Gaussian falloff for the light mask
+            sigma = radius / 2.0 # Adjust for how soft the edge is
+            light_mask_single_channel = light_intensity * np.exp(-(dist_from_center**2 / (2 * sigma**2)))
+
+            # Make it a 3-channel mask (assuming white light, so R=G=B)
+            light_mask_rgb = np.zeros_like(image_float)
+            for i in range(3): # Apply to B, G, R channels
+                light_mask_rgb[:,:,i] = light_mask_single_channel
+
+            # Blend using screen mode (for a more natural light addition)
+            augmented_image_float = 1.0 - (1.0 - image_float) * (1.0 - light_mask_rgb)
+            augmented_image_float = np.clip(augmented_image_float, 0.0, 1.0)
+
+            labels["img"] = (augmented_image_float * 255).astype(np.uint8)
+
+        return labels
+
 class RandomFlip:
     """
     Applies a random horizontal or vertical flip to an image with a given probability.
@@ -2543,6 +2681,13 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             CutMix(dataset, pre_transform=pre_transform, p=hyp.cutmix),
             Albumentations(p=1.0),
             RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
+            RandomHDRTone(p=hyp.hdr_tone if hasattr(hyp, 'hdr_tone') else 0.0), # Add RandomHDRTone
+            RandomLightSource( # Add RandomLightSource
+                p=hyp.lightsource if hasattr(hyp, 'lightsource') else 0.0,
+                max_brightness=hyp.lightsource_max_brightness if hasattr(hyp, 'lightsource_max_brightness') else 0.8,
+                min_radius_factor=hyp.lightsource_min_radius_factor if hasattr(hyp, 'lightsource_min_radius_factor') else 0.1,
+                max_radius_factor=hyp.lightsource_max_radius_factor if hasattr(hyp, 'lightsource_max_radius_factor') else 0.4
+            ),
             RandomFlip(direction="vertical", p=hyp.flipud),
             RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
         ]
